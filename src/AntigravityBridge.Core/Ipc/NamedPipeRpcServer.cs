@@ -8,20 +8,23 @@ using AntigravityBridge.Core.Capture;
 using AntigravityBridge.Core.Input;
 using AntigravityBridge.Core.Models;
 using AntigravityBridge.Core.Native;
+using AntigravityBridge.Core.Overlay;
 using AntigravityBridge.Core.Silent;
 
 namespace AntigravityBridge.Core.Ipc;
 
 /// <summary>
 /// High-speed Named Pipe RPC server (\\.\pipe\AntigravityBridge) using newline-delimited JSON.
-/// Executes all Win32/GDI/UIA operations on a dedicated desktop-bound STA thread so SetThreadDesktop("default")
-/// succeeds before any HWND/GDI hook is created on the thread.
+/// Executes all Win32/GDI/UIA operations on a dedicated desktop-bound thread, manages the Claude-style
+/// Cyan<->Blue Shimmering HUD Overlay, and enforces mandatory User Consent for program launches & privilege elevation.
 /// </summary>
 public sealed class NamedPipeRpcServer
 {
     private readonly ScreenCaptureEngine _capture = new();
     private readonly GlobalInputEngine _input = new();
     private readonly SilentModeEngine _silent = new();
+    private readonly HudOverlayService _hud = new();
+    private readonly PermissionGuard _permissions = new();
     private readonly BlockingCollection<(string Json, TaskCompletionSource<string> Tcs)> _workQueue = new();
     private readonly Thread _desktopWorkerThread;
 
@@ -154,14 +157,21 @@ public sealed class NamedPipeRpcServer
 
     private object? Dispatch(string method, JsonElement? p)
     {
+        UpdateHudForMethod(method, p);
+
         return method switch
         {
             "ping" => new
             {
                 status = "pong",
-                engine = "AntigravityBridge.Core (.NET 8.0 Turbo)",
+                engine = "AntigravityBridge.Core (.NET 8.0 Turbo + Cyan-Blue HUD)",
+                overlay_active = _hud.IsEnabled,
                 timestamp = DateTimeOffset.UtcNow.ToString("O")
             },
+
+            // --- HUD Visualization & User Consent ---
+            "set_overlay" => SetOverlayState(p),
+            "request_permission" => RequestExplicitPermission(p),
 
             // --- Vision & Screen Capture (Native C# GDI+ Overlays & JPEG/PNG) ---
             "get_monitors" => _capture.GetMonitors(),
@@ -230,7 +240,10 @@ public sealed class NamedPipeRpcServer
                 arguments: GetString(p, "arguments"),
                 hidden: GetBool(p, "hidden") ?? false,
                 waitFilter: GetString(p, "wait_filter"),
-                timeoutMs: GetInt(p, "timeout_ms") ?? 3000),
+                timeoutMs: GetInt(p, "timeout_ms") ?? 3000,
+                elevate: GetBool(p, "elevate") ?? false,
+                reason: GetString(p, "reason"),
+                permissionGuard: (GetBool(p, "skip_consent") ?? false) ? null : _permissions),
 
             "manage_window" => _silent.ManageWindow(
                 hwndValue: GetRequiredLong(p, "hwnd"),
@@ -296,6 +309,71 @@ public sealed class NamedPipeRpcServer
         {
             capture = cap,
             ui_elements = uiElements ?? []
+        };
+    }
+
+    private void UpdateHudForMethod(string method, JsonElement? p)
+    {
+        if (method is "ping" or "get_monitors" or "set_overlay")
+            return;
+
+        int? px = GetInt(p, "x");
+        int? py = GetInt(p, "y");
+        string label = method switch
+        {
+            "capture_screen" => "👁️ Компьютерное зрение: Захват экрана",
+            "capture_window_silent" => "👻 Silent-Mode: Фоновый снимок окна",
+            "mouse_click" => $"🖱️ Клик мыши ({px ?? 0}, {py ?? 0})",
+            "mouse_move" => $"🖱️ Перемещение курсора ({px ?? 0}, {py ?? 0})",
+            "mouse_drag" => "🖱️ Перетаскивание (Drag & Drop)",
+            "mouse_scroll" => "🖱️ Прокрутка колеса мыши",
+            "keyboard_type" => "⌨️ Аппаратный ввод текста (Unicode)",
+            "keyboard_hotkey" => $"⌨️ Горячие клавиши: {GetString(p, "keys")}",
+            "silent_click" => "👻 Silent-Mode: Фоновый клик",
+            "silent_type" => "👻 Silent-Mode: Фоновый ввод текста",
+            "silent_automate_element" => $"👻 Silent-Mode UIA: {GetString(p, "name") ?? GetString(p, "automation_id")}",
+            "inspect_window_ui" => "🔍 Сканирование дерева UI Automation",
+            "launch_app" => $"🚀 Запрос запуска: {GetString(p, "file_name")}",
+            "request_permission" => "🛡️ Ожидание согласия пользователя...",
+            "execute_batch" => "⚡ Выполнение пакетного сценария (Turbo Batch)",
+            _ => $"Активно: {method}"
+        };
+
+        _hud.NotifyAction(label, px, py);
+    }
+
+    private object SetOverlayState(JsonElement? p)
+    {
+        bool visible = GetBool(p, "visible") ?? true;
+        string? status = GetString(p, "status_text");
+        _hud.SetOverlayVisible(visible, status);
+        return new { ok = true, visible, status_text = status };
+    }
+
+    private object RequestExplicitPermission(JsonElement? p)
+    {
+        string target = GetRequiredString(p, "target_program");
+        string? args = GetString(p, "arguments");
+        string? reason = GetString(p, "reason");
+        bool elevate = GetBool(p, "elevate") ?? false;
+        bool needsElevation = PermissionGuard.IsElevationLikelyRequired(target, args, elevate);
+        int timeoutSec = GetInt(p, "timeout_seconds") ?? 60;
+
+        var (allowed, decision, remembered) = _permissions.RequestUserPermission(
+            operationType: needsElevation ? "Повышение прав (Admin / UAC)" : (GetString(p, "operation_type") ?? "Открытие программы"),
+            targetProgram: target,
+            arguments: args,
+            reason: reason,
+            isElevation: needsElevation,
+            timeoutSeconds: timeoutSec);
+
+        return new
+        {
+            allowed,
+            decision,
+            remembered_for_session = remembered,
+            target_program = target,
+            elevated = needsElevation
         };
     }
 

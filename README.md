@@ -1,12 +1,13 @@
 <div align="center">
 
-# 🌌 Antigravity Computer-Use & Silent-Mode Bridge (`v0.2 Turbo`)
+# 🌌 Antigravity Computer-Use & Silent-Mode Bridge (`v0.3 Shield & Aura`)
 
 **Ultra-Fast Hybrid C# (.NET 8 LTS) + Python MCP Gateway for Google Antigravity**
 
 [![.NET 8.0 LTS](https://img.shields.io/badge/.NET-8.0%20LTS%20(Windows%20Turbo)-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-2024--11--05-00C7B7)](https://modelcontextprotocol.io/)
+[![Cyan-Blue HUD](https://img.shields.io/badge/HUD-Cyan%E2%86%94Blue%20Aura%20%2B%20UAC%20Consent-00EEFF)](#%EF%B8%8F-%D0%B2%D0%B8%D0%B7%D1%83%D0%B0%D0%BB%D0%B8%D0%B7%D0%B0%D1%86%D0%B8%D1%8F-%D0%B8-%D0%BE%D0%B1%D1%8F%D0%B7%D0%B0%D1%82%D0%B5%D0%BB%D1%8C%D0%BD%D0%BE%D0%B5-%D1%81%D0%BE%D0%B3%D0%BB%D0%B0%D1%81%D0%B8%D0%B5-cyan--blue-hud--consent-guard)
 [![IPC Transport](https://img.shields.io/badge/IPC-Windows%20Named%20Pipes%20(0.37ms)-success)](#бенчмарк-скорости--performance-benchmark)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -36,6 +37,18 @@
 | **Сценарий «Открыть Блокнот → Ввести текст → Проверить»** | **6–7 ходов LLM (~22–30 сек)** | 6 ходов (~15 сек) | **1 ход `execute_batch` (~90–250 ms)** | **~20x–50x** |
 
 > Проверить скорость на своей машине: `python tests/benchmark_speed.py`
+
+---
+
+## 🛡️ Визуализация и обязательное согласие (Cyan ↔ Blue HUD & Consent Guard)
+
+1. **🌌 Переливающаяся голубо-синяя рамка экрана (Claude Computer-Use Style HUD)**
+   - Реализована в [`HudOverlayService.cs`](src/AntigravityBridge.Core/Overlay/HudOverlayService.cs): поверх экрана создается 100% прозрачное для кликов (`WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE`) окно с плавной 30 FPS анимацией градиента **Голубой (`#00EEFF`) ↔ Синий (`#2563EB`) ↔ Голубой**.
+   - В верхней центральной части экрана выводится плашка активного действия (`● ANTIGRAVITY COMPUTER-USE • ...`), а в точках клика мыши отрисовывается расходящийся голубо-синий импульс.
+2. **🔒 Обязательный запрос согласия на открытие программ и повышение прав (`PermissionGuard`)**
+   - Реализован в [`PermissionDialog.cs`](src/AntigravityBridge.Core/Overlay/PermissionDialog.cs) и закреплен в правилах скилла [`.agents/skills/antigravity-bridge/SKILL.md`](.agents/skills/antigravity-bridge/SKILL.md).
+   - **Открытие программ (`launch_app` / `request_permission`)**: перед запуском любого внешнего приложения на экран выводится нативное модальное окно с переливающейся голубо-синей рамкой, названием программы, аргументами и причиной запуска (`✓ Разрешить`, `✓ Разрешить на сессию`, `✕ Запретить`).
+   - **Повышение прав (`elevate=True` / UAC / Инсталляторы)**: автоматически определяет установщики (`setup`, `install`, `msiexec`, `regedit`, `runas`) и запрашивает явное разрешение пользователя на повышение привилегий Администратора.
 
 ---
 
@@ -103,7 +116,9 @@ flowchart LR
 | Инструмент / Tool | Режим / Mode | Описание / Description |
 | :--- | :---: | :--- |
 | **`execute_batch`** | **⚡ Turbo Macro** | **Выполнение цепочки любых действий + авто-ожидание окна + финальный скриншот за 1 вызов.** |
-| **`launch_app`** | **⚡ App Runner** | **Быстрый запуск приложения с ожиданием появления его окна (`wait_filter`) и возвратом `HWND`.** |
+| **`request_permission`** | **🛡️ Consent Guard** | **Обязательное голубо-синее окно запроса согласия на открытие программы или повышение прав (UAC).** |
+| **`set_overlay`** | **🌌 Cyan-Blue HUD** | **Управление переливающейся голубо-синей рамкой по краям экрана и текстом верхней плашки.** |
+| **`launch_app`** | **⚡ App Runner** | **Запуск приложения (с обязательной проверкой согласия пользователя) и ожиданием `HWND`.** |
 | `screen_capture` | Vision | Скриншот экрана/области (~49 мс) с сеткой `(X, Y)`, курсором и `diff_percent`. |
 | `window_capture_silent` | **Silent Vision** | Скриншот окна (`HWND`) в фоне (~14 мс) без перехвата фокуса + разметка `[1..N]`. |
 | `list_windows` | Discovery | Мгновенный список открытых окон (~1.3 мс) через `QueryFullProcessImageName`. |

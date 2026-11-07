@@ -1,41 +1,47 @@
 ---
 name: antigravity-bridge
-description: Turbo Computer Vision, Mouse/Keyboard HID control, Silent-Mode background window automation, and single-turn Macro Batch execution for Windows via the Antigravity Bridge MCP server.
+description: Turbo Computer Vision, Mouse/Keyboard HID control, Silent-Mode background window automation, Cyan-to-Blue Visual HUD, and Mandatory User Consent Guard for Windows via the Antigravity Bridge MCP server.
 ---
 
-# Antigravity Computer-Use & Silent-Mode Bridge Skill (v0.2 Turbo)
+# Antigravity Computer-Use & Silent-Mode Bridge Skill (`v0.3 Shield & Aura`)
 
 Use the `antigravity-bridge` MCP tools whenever the user asks you to see the screen, control the mouse or keyboard, or automate external Windows applications in the background (**Silent-Mode**).
 
-## ⚡ Speed Rule #1: Always Prefer `execute_batch` for Multi-Step Workflows
+---
 
-Unlike traditional Computer-Use agents (such as Claude Computer-Use) that waste 1 full LLM turn per click or keystroke, **Antigravity Bridge** supports atomic kernel-speed macro pipelines via `execute_batch`:
+## 🛡️ ОБЯЗАТЕЛЬНОЕ ПРАВИЛО СОГЛАСИЯ (MANDATORY CONSENT POLICY)
 
-- Combine `launch_app` / `wait_window` / `mouse_click` / `keyboard_type` / `keyboard_hotkey` / `silent_click` / `silent_type` / `silent_automate_element` into a single `execute_batch(steps=[...], capture_after=True)` call!
-- If a step runs `wait_window` (e.g., `{"op": "wait_window", "filter": "Notepad", "focus": true}`), its resolved `hwnd` is **automatically bound** to subsequent `silent_type`, `silent_click`, `silent_automate_element`, or `manage_window` steps in the same batch!
+> [!IMPORTANT]
+> **Данный скилл ОБЯЗАН запрашивать разрешение пользователя в двух случаях:**
+> 1. **Открытие любых внешних программ (`launch_app` / запуск процессов)**:
+>    - Перед открытием любой программы обязательно спроси согласие у пользователя (в чате или вызовом `request_permission(target_program=..., reason=..., elevate=False)` / `launch_app(..., reason=...)`, который открывает на экране нативное окно согласия с переливающейся голубо-синей рамкой).
+>    - Если пользователь нажал **«✕ Запретить»** (`allowed: false` / `PermissionDenied`), немедленно прекрати запуск и сообщи об этом пользователю.
+> 2. **Повышение прав / UAC / Установка программ (`elevate=True`, инсталляторы, системные утилиты)**:
+>    - Перед любым действием, требующим прав Администратора (установка ПО, `runas`, реестр, сетевые настройки, системные службы), **обязательно** запроси разрешение на повышение прав: `request_permission(target_program=..., operation_type="Повышение прав (Admin / UAC)", elevate=True, reason=...)` (или укажи в чате, зачем требуются права администратора).
+>    - Никогда не обходи отказ пользователя и не используй скрытые ключи без предварительного согласия.
 
-### Example: Launch Notepad & Type Cyrillic Text in 1 Single Turn (<150ms)
-```json
-{
-  "steps": [
-    {"op": "launch_app", "file_name": "notepad.exe", "wait_filter": "Notepad"},
-    {"op": "silent_type", "text": "Привет из Antigravity Turbo!"}
-  ],
-  "capture_after": true
-}
-```
+---
+
+## 🌌 Визуализация Computer-Use (Cyan ↔ Deep Blue Shimmering HUD)
+
+Во время работы с компьютером шлюз автоматически включает визуальную индикацию в стиле Claude Computer-Use:
+- По краям экрана переливается **голубая ↔ темно-синяя неоновая рамка (`#00EEFF` ↔ `#2563EB`, 30 FPS)**, полностью прозрачная для кликов мыши (`WS_EX_TRANSPARENT`).
+- В верхней части экрана отображается плашка статуса **`ANTIGRAVITY COMPUTER-USE • [Текущее действие]`**.
+- В точках клика мыши отрисовывается расходящийся голубо-синий импульс.
+- Ты можешь управлять статусом на плашке через `set_overlay(visible=True, status_text="...")`.
+
+---
+
+## ⚡ Speed Rule: Используй `execute_batch` для многошаговых действий
+
+Объединяй последовательности действий (`mouse_click`, `keyboard_type`, `keyboard_hotkey`, `wait_window`, `silent_click`, `silent_type`, `silent_automate_element`, `manage_window`) в единый вызов `execute_batch(steps=[...], capture_after=True)` для выполнения за 1 ход (<150 мс).
 
 ## Workflow Guidelines
 
-1. **Prefer Silent-Mode for External Apps (`silent_*` / `window_capture_silent`)**
-   - Call `list_windows` (<1.5ms) to find the target application's `hwnd`, or use `launch_app(..., wait_filter=...)`.
-   - Use `window_capture_silent(hwnd=..., annotate_ui=True)` (~14ms) to see the window's content and its numbered `[1..N]` UI elements without interrupting the user or stealing focus.
-   - Use `silent_automate_element(hwnd=..., name=..., action="invoke" | "set_value")` or `silent_click` / `silent_type` so the user's physical mouse and active window remain untouched.
-
-2. **Full Screen Vision & Active Mouse/Keyboard Control**
-   - Call `screen_capture(draw_grid=True)` (~49ms) to inspect the entire monitor with an `(X, Y)` coordinate grid, red cursor crosshair, and automatic `diff_percent` / `screen_changed` detection.
-   - Use `mouse_action(action="click", x=..., y=...)` or `mouse_action(action="click", ui_element_id=...)` to click accurately.
-   - Use `keyboard_action(text="...", press_enter=True)` for single-batch kernel `KEYEVENTF_UNICODE` text entry (<0.5ms for 200 chars!).
-
-3. **Safety & Emergency Stop**
-   - Moving the physical mouse cursor to the top-left corner `(0, 0)` triggers the hardware Fail-Safe in `AntigravityBridge.Core` and aborts active input immediately.
+1. **Silent-Mode для фоновых окон (`silent_*` / `window_capture_silent`)**
+   - Вызови `list_windows` (<1.5 мс), чтобы найти `hwnd` нужного окна.
+   - Используй `window_capture_silent(hwnd=..., annotate_ui=True)` (~14 мс) для получения снимка фонового окна с разметкой контролов `[1..N]` без перехвата фокуса.
+   - Используй `silent_automate_element`, `silent_click` и `silent_type`, чтобы физический курсор пользователя оставался свободным.
+2. **Полный экран и активный ввод**
+   - Вызывай `screen_capture(draw_grid=True)` (~49 мс) для просмотра экрана с координатной сеткой `(X, Y)` и голубо-синей рамкой безопасности.
+   - Увод физического курсора мыши в левый верхний угол `(0, 0)` мгновенно активирует аппаратный **Fail-Safe**.

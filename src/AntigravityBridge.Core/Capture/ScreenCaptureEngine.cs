@@ -340,7 +340,57 @@ public sealed class ScreenCaptureEngine
                 g.DrawLine(s_cursorPen, localCx - 14, localCy, localCx + 14, localCy);
                 g.DrawLine(s_cursorPen, localCx, localCy - 14, localCx, localCy + 14);
             }
+
+            // Claude-style Cyan <-> Royal Blue Shimmering Border & Top HUD Pill on full-screen captures
+            if (!useRelativeCoords && width >= 640 && height >= 480)
+            {
+                DrawCyanBlueAuraBorder(g, width, height);
+            }
         }
+    }
+
+    private static void DrawCyanBlueAuraBorder(Graphics g, int width, int height)
+    {
+        double phase = (Environment.TickCount64 % 4000) / 4000.0 * Math.PI * 2.0;
+        double t = (Math.Sin(phase) + 1.0) * 0.5;
+
+        Color cyan = Color.FromArgb(225, 0, 238, 255);
+        Color royalBlue = Color.FromArgb(225, 37, 99, 235);
+        Color c1 = Color.FromArgb(
+            225,
+            (int)(cyan.R + (royalBlue.R - cyan.R) * t),
+            (int)(cyan.G + (royalBlue.G - cyan.G) * t),
+            (int)(cyan.B + (royalBlue.B - cyan.B) * t));
+        Color c2 = Color.FromArgb(
+            225,
+            (int)(royalBlue.R + (cyan.R - royalBlue.R) * t),
+            (int)(royalBlue.G + (cyan.G - royalBlue.G) * t),
+            (int)(royalBlue.B + (cyan.B - royalBlue.B) * t));
+
+        var rect = new Rectangle(0, 0, width, height);
+        using var grad = new LinearGradientBrush(rect, c1, c2, 35f);
+        using var outerPen = new Pen(grad, 8f);
+        using var corePen = new Pen(Color.FromArgb(240, 120, 245, 255), 2f);
+
+        g.DrawRectangle(outerPen, 4, 4, width - 8, height - 8);
+        g.DrawRectangle(corePen, 1, 1, width - 2, height - 2);
+
+        // Top-Center Pill Badge
+        const string pillText = "ANTIGRAVITY COMPUTER-USE  •  CYAN-BLUE SHIELD ACTIVE";
+        int pillW = 390;
+        int pillH = 26;
+        int pillX = (width - pillW) / 2;
+        int pillY = 8;
+        var pillRect = new Rectangle(pillX, pillY, pillW, pillH);
+
+        using var pillBg = new SolidBrush(Color.FromArgb(225, 12, 20, 40));
+        using var pillBorder = new Pen(grad, 2f);
+        g.FillRectangle(pillBg, pillRect);
+        g.DrawRectangle(pillBorder, pillRect);
+
+        using var orbBrush = new SolidBrush(Color.FromArgb(255, 0, 240, 255));
+        g.FillEllipse(orbBrush, pillX + 10, pillY + 8, 10, 10);
+        g.DrawString(pillText, s_overlayFont, s_whiteBrush, pillX + 26, pillY + 5);
     }
 
     private static void DrawBadgeFast(Graphics g, string text, int x, int y, Brush bgBrush)

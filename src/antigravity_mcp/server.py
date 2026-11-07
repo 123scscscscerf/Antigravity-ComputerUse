@@ -89,14 +89,56 @@ class AntigravityBridgeServer:
                 },
             },
             {
+                "name": "request_permission",
+                "description": (
+                    "MANDATORY CONSENT GUARD: Displays a native Cyan-to-Blue shimmering security modal on the user's "
+                    "screen asking for explicit permission to open an external program OR elevate privileges (UAC / Run as Admin). "
+                    "MUST be called before launching external software or running elevated/installer commands."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "target_program": {"type": "string", "description": "Executable name or path (e.g. 'notepad++.exe', 'powershell.exe')"},
+                        "arguments": {"type": "string", "description": "Command-line arguments if any"},
+                        "operation_type": {
+                            "type": "string",
+                            "enum": ["Открытие программы", "Повышение прав (Admin / UAC)"],
+                            "default": "Открытие программы",
+                        },
+                        "elevate": {"type": "boolean", "default": False, "description": "True if requesting Administrator / UAC elevation"},
+                        "reason": {"type": "string", "description": "Clear explanation shown to the user in Russian"},
+                        "timeout_seconds": {"type": "integer", "default": 60},
+                    },
+                    "required": ["target_program", "reason"],
+                },
+            },
+            {
+                "name": "set_overlay",
+                "description": (
+                    "Controls the Claude Computer-Use style Cyan <-> Deep Blue shimmering screen border and top HUD status pill."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "visible": {"type": "boolean", "default": True, "description": "Show or hide the Cyan-Blue HUD border"},
+                        "status_text": {"type": "string", "description": "Custom status text displayed in the top-center HUD pill"},
+                    },
+                },
+            },
+            {
                 "name": "launch_app",
-                "description": "Launches an application or command and optionally waits for its window to appear (returning its HWND immediately).",
+                "description": (
+                    "Launches an external application (automatically triggering the mandatory Cyan-Blue User Consent Modal "
+                    "for program launch or UAC elevation) and optionally waits for its window to appear."
+                ),
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "file_name": {"type": "string", "description": "Executable name or path (e.g. 'notepad.exe', 'calc.exe')"},
                         "arguments": {"type": "string", "description": "Optional CLI arguments"},
                         "hidden": {"type": "boolean", "default": False, "description": "Launch hidden in background"},
+                        "elevate": {"type": "boolean", "default": False, "description": "Request Administrator (UAC) elevation"},
+                        "reason": {"type": "string", "description": "Explanation shown to the user in the Consent Dialog"},
                         "wait_filter": {"type": "string", "description": "Optional window title/process substring to wait for"},
                         "timeout_ms": {"type": "integer", "default": 3000},
                     },
@@ -328,7 +370,7 @@ class AntigravityBridgeServer:
                 )
             return blocks
 
-        if name in ("list_windows", "launch_app"):
+        if name in ("list_windows", "launch_app", "request_permission", "set_overlay"):
             res = self.core.call(name, args)
             return [{"type": "text", "text": json.dumps(res, ensure_ascii=False, indent=2)}]
 

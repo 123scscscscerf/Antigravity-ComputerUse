@@ -4,6 +4,7 @@ using System.Windows.Automation;
 using AntigravityBridge.Core.Input;
 using AntigravityBridge.Core.Models;
 using AntigravityBridge.Core.Native;
+using AntigravityBridge.Core.Overlay;
 
 namespace AntigravityBridge.Core.Silent;
 
@@ -110,17 +111,51 @@ public sealed class SilentModeEngine
         throw new TimeoutException($"Window matching '{filter}' did not appear within {timeoutMs} ms.");
     }
 
-    public object LaunchApp(string fileName, string? arguments = null, bool hidden = false, string? waitFilter = null, int timeoutMs = 3000)
+    public object LaunchApp(
+        string fileName,
+        string? arguments = null,
+        bool hidden = false,
+        string? waitFilter = null,
+        int timeoutMs = 3000,
+        bool elevate = false,
+        string? reason = null,
+        PermissionGuard? permissionGuard = null)
     {
         Win32.EnsureDefaultDesktop();
+
+        bool needsElevation = PermissionGuard.IsElevationLikelyRequired(fileName, arguments, elevate);
+        string permissionDecision = "not_required";
+
+        if (permissionGuard != null)
+        {
+            var (allowed, decision, _) = permissionGuard.RequestUserPermission(
+                operationType: needsElevation ? "Повышение прав / Установка" : "Открытие программы",
+                targetProgram: fileName,
+                arguments: arguments,
+                reason: reason,
+                isElevation: needsElevation);
+
+            permissionDecision = decision;
+            if (!allowed)
+            {
+                throw new UnauthorizedAccessException(
+                    $"PermissionDenied ({decision}): Пользователь отклонил запрос на {(needsElevation ? "повышение прав (Admin/UAC)" : "запуск программы")} '{fileName}'.");
+            }
+        }
+
         var psi = new ProcessStartInfo
         {
             FileName = fileName,
             Arguments = arguments ?? string.Empty,
-            UseShellExecute = !hidden,
-            CreateNoWindow = hidden,
-            WindowStyle = hidden ? ProcessWindowStyle.Hidden : ProcessWindowStyle.Normal
+            UseShellExecute = elevate || !hidden,
+            CreateNoWindow = hidden && !elevate,
+            WindowStyle = (hidden && !elevate) ? ProcessWindowStyle.Hidden : ProcessWindowStyle.Normal
         };
+
+        if (elevate)
+        {
+            psi.Verb = "runas";
+        }
 
         var proc = Process.Start(psi)
             ?? throw new InvalidOperationException($"Failed to launch '{fileName}'.");
@@ -136,6 +171,8 @@ public sealed class SilentModeEngine
             ok = true,
             pid = proc.Id,
             file_name = fileName,
+            elevated = needsElevation,
+            permission = permissionDecision,
             window
         };
     }
