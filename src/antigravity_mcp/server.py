@@ -1,0 +1,401 @@
+"""Google Antigravity MCP Server (Computer Vision, HID Input, Silent-Mode Automation).
+
+Implements the Model Context Protocol (MCP) over stdio without requiring external heavy dependencies,
+while also supporting the official `mcp` SDK if installed.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import time
+from typing import Any
+
+from .core_client import CoreBridgeClient
+from .safety import SafetyGuard
+from .vision import VisionProcessor
+
+
+class AntigravityBridgeServer:
+    """MCP Server bridging Google Antigravity to the C# .NET 8 Native Windows Core."""
+
+    def __init__(self) -> None:
+        self.core = CoreBridgeClient()
+        self.vision = VisionProcessor()
+        self.safety = SafetyGuard()
+        self._last_ui_elements: dict[int, dict[str, Any]] = {}
+
+    def get_mcp_tools_schema(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "screen_capture",
+                "description": (
+                    "Captures a screenshot of the screen or region so Antigravity can see the display. "
+                    "Overlays an optional coordinate grid and cursor marker for accurate clicking."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "monitor_index": {"type": "integer", "default": 0, "description": "Monitor index (0 = primary)"},
+                        "draw_grid": {"type": "boolean", "default": True, "description": "Overlay (X, Y) coordinate grid"},
+                        "grid_step": {"type": "integer", "default": 200, "description": "Grid spacing in pixels"},
+                        "x": {"type": "integer", "description": "Optional crop region left X"},
+                        "y": {"type": "integer", "description": "Optional crop region top Y"},
+                        "width": {"type": "integer", "description": "Optional crop region width"},
+                        "height": {"type": "integer", "description": "Optional crop region height"},
+                    },
+                },
+            },
+            {
+                "name": "window_capture_silent",
+                "description": (
+                    "SILENT-MODE: Captures a screenshot of a specific window (HWND) in the background "
+                    "using Win32 PrintWindow (PW_RENDERFULLCONTENT) WITHOUT stealing focus or bringing it to front. "
+                    "Optionally annotates interactive UI controls with [1..N] Set-of-Marks badges."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hwnd": {"type": ["integer", "string"], "description": "Window handle (decimal or hex like '0x1A2B')"},
+                        "annotate_ui": {"type": "boolean", "default": True, "description": "Draw [ID] badges on interactive UI elements"},
+                        "draw_grid": {"type": "boolean", "default": True, "description": "Overlay window-relative coordinate grid"},
+                    },
+                    "required": ["hwnd"],
+                },
+            },
+            {
+                "name": "list_windows",
+                "description": "Lists open windows with their HWND, title, process name, coordinates, and state.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "visible_only": {"type": "boolean", "default": True},
+                        "filter": {"type": "string", "description": "Filter by window title, process name, or class"},
+                    },
+                },
+            },
+            {
+                "name": "inspect_window_ui",
+                "description": (
+                    "SILENT-MODE: Reads the Windows UI Automation (UIA) accessibility tree of a target window (HWND). "
+                    "Returns buttons, inputs, checkboxes, their [id], Name, AutomationId, coordinates, and supported patterns."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hwnd": {"type": ["integer", "string"], "description": "Target window handle"},
+                        "max_elements": {"type": "integer", "default": 80},
+                    },
+                    "required": ["hwnd"],
+                },
+            },
+            {
+                "name": "mouse_action",
+                "description": (
+                    "Performs global mouse actions (click, double_click, right_click, move, drag, scroll). "
+                    "Can target exact screen coordinates (x, y) OR a UI element badge [ui_element_id] from inspect_window_ui."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["click", "double_click", "right_click", "middle_click", "move", "drag", "scroll"],
+                            "default": "click",
+                        },
+                        "x": {"type": "integer", "description": "Screen X coordinate"},
+                        "y": {"type": "integer", "description": "Screen Y coordinate"},
+                        "ui_element_id": {"type": "integer", "description": "Optional [id] from inspect_window_ui"},
+                        "end_x": {"type": "integer", "description": "Destination X for drag"},
+                        "end_y": {"type": "integer", "description": "Destination Y for drag"},
+                        "scroll_delta": {"type": "integer", "description": "Wheel ticks (+up / -down)"},
+                        "duration_ms": {"type": "integer", "default": 100, "description": "Smooth movement duration in ms"},
+                    },
+                    "required": ["action"],
+                },
+            },
+            {
+                "name": "keyboard_action",
+                "description": (
+                    "Performs global keyboard actions: types full Unicode/Cyrillic text via hardware KEYEVENTF_UNICODE "
+                    "or presses hotkey combinations (e.g. 'ctrl+c', 'alt+tab', 'win+r', 'enter')."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "Text to type (supports Cyrillic, English, symbols)"},
+                        "hotkey": {"type": "string", "description": "Key or combination like 'ctrl+shift+esc', 'enter', 'alt+f4'"},
+                        "press_enter": {"type": "boolean", "default": False, "description": "Press Enter after typing text"},
+                    },
+                },
+            },
+            {
+                "name": "silent_click",
+                "description": (
+                    "SILENT-MODE: Sends a mouse click directly to a background window (HWND) via Win32 PostMessage "
+                    "WITHOUT moving the user's physical mouse cursor or stealing window focus."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hwnd": {"type": ["integer", "string"], "description": "Target window handle"},
+                        "rel_x": {"type": "integer", "description": "X coordinate relative to the window's top-left corner"},
+                        "rel_y": {"type": "integer", "description": "Y coordinate relative to the window's top-left corner"},
+                        "button": {"type": "string", "enum": ["left", "right", "middle"], "default": "left"},
+                        "double_click": {"type": "boolean", "default": False},
+                    },
+                    "required": ["hwnd", "rel_x", "rel_y"],
+                },
+            },
+            {
+                "name": "silent_type",
+                "description": (
+                    "SILENT-MODE: Sends text (WM_CHAR) or keystrokes (WM_KEYDOWN) directly into a background window "
+                    "without changing window focus."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hwnd": {"type": ["integer", "string"], "description": "Target window handle"},
+                        "text": {"type": "string", "description": "Text to send in background"},
+                        "key": {"type": "string", "description": "Optional special key like 'enter', 'tab', 'escape'"},
+                        "press_enter": {"type": "boolean", "default": False},
+                    },
+                    "required": ["hwnd"],
+                },
+            },
+            {
+                "name": "silent_automate_element",
+                "description": (
+                    "SILENT-MODE: Invokes a button, toggles a checkbox, or sets an input field value in a background window "
+                    "using Windows UI Automation (InvokePattern / ValuePattern / TogglePattern) with zero mouse interference."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hwnd": {"type": ["integer", "string"], "description": "Target window handle"},
+                        "name": {"type": "string", "description": "Element Name (or substring)"},
+                        "automation_id": {"type": "string", "description": "Element AutomationId"},
+                        "action": {"type": "string", "enum": ["invoke", "set_value"], "default": "invoke"},
+                        "value": {"type": "string", "description": "Value to set when action='set_value'"},
+                    },
+                    "required": ["hwnd"],
+                },
+            },
+            {
+                "name": "manage_window",
+                "description": "Manages window state: focus, minimize, maximize, restore, show_no_activate, hide, close, move_resize.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "hwnd": {"type": ["integer", "string"], "description": "Target window handle"},
+                        "action": {
+                            "type": "string",
+                            "enum": ["focus", "minimize", "maximize", "restore", "show_no_activate", "hide", "close", "move_resize"],
+                        },
+                        "x": {"type": "integer"},
+                        "y": {"type": "integer"},
+                        "width": {"type": "integer"},
+                        "height": {"type": "integer"},
+                    },
+                    "required": ["hwnd", "action"],
+                },
+            },
+        ]
+
+    def execute_tool(self, name: str, args: dict[str, Any]) -> list[dict[str, Any]]:
+        """Executes an MCP tool call and returns MCP content blocks (TextContent / ImageContent)."""
+        self.safety.check_rate_limit(name)
+        self.safety.record_audit(name, args)
+
+        if name == "screen_capture":
+            raw = self.core.call("capture_screen", args)
+            filename = f"screen_{int(time.time() * 1000)}.png"
+            processed = self.vision.process_capture(
+                image_base64=raw["image_base64"],
+                offset_x=raw["offset_x"],
+                offset_y=raw["offset_y"],
+                cursor_x=raw["cursor_x"],
+                cursor_y=raw["cursor_y"],
+                draw_grid=args.get("draw_grid", True),
+                grid_step=args.get("grid_step", 200),
+                save_filename=filename,
+            )
+            meta = {
+                "width": raw["width"],
+                "height": raw["height"],
+                "offset_x": raw["offset_x"],
+                "offset_y": raw["offset_y"],
+                "cursor": {"x": raw["cursor_x"], "y": raw["cursor_y"]},
+                "saved_path": processed["saved_path"],
+            }
+            return [
+                {"type": "text", "text": json.dumps(meta, ensure_ascii=False, indent=2)},
+                {"type": "image", "data": processed["image_base64"], "mimeType": "image/png"},
+            ]
+
+        if name == "window_capture_silent":
+            hwnd = args["hwnd"]
+            raw = self.core.call("capture_window_silent", {"hwnd": hwnd})
+            ui_elements = None
+            if args.get("annotate_ui", True):
+                ui_elements = self.core.call("inspect_window_ui", {"hwnd": hwnd, "max_elements": 60})
+                self._last_ui_elements = {el["id"]: el for el in ui_elements}
+
+            filename = f"window_{int(time.time() * 1000)}.png"
+            processed = self.vision.process_capture(
+                image_base64=raw["image_base64"],
+                offset_x=raw["offset_x"],
+                offset_y=raw["offset_y"],
+                draw_grid=args.get("draw_grid", True),
+                grid_step=150,
+                ui_elements=ui_elements,
+                use_relative_coords=True,
+                save_filename=filename,
+            )
+            meta = {
+                "hwnd": hwnd,
+                "capture_method": raw["capture_method"],
+                "width": raw["width"],
+                "height": raw["height"],
+                "window_screen_offset": {"x": raw["offset_x"], "y": raw["offset_y"]},
+                "saved_path": processed["saved_path"],
+                "annotated_ui_elements_count": len(ui_elements) if ui_elements else 0,
+                "ui_elements": ui_elements[:25] if ui_elements else [],
+            }
+            return [
+                {"type": "text", "text": json.dumps(meta, ensure_ascii=False, indent=2)},
+                {"type": "image", "data": processed["image_base64"], "mimeType": "image/png"},
+            ]
+
+        if name == "list_windows":
+            res = self.core.call("list_windows", args)
+            return [{"type": "text", "text": json.dumps(res, ensure_ascii=False, indent=2)}]
+
+        if name == "inspect_window_ui":
+            res = self.core.call("inspect_window_ui", args)
+            self._last_ui_elements = {el["id"]: el for el in res}
+            return [{"type": "text", "text": json.dumps(res, ensure_ascii=False, indent=2)}]
+
+        if name == "mouse_action":
+            act = args.get("action", "click")
+            x = args.get("x")
+            y = args.get("y")
+            el_id = args.get("ui_element_id")
+            if el_id is not None and el_id in self._last_ui_elements:
+                el = self._last_ui_elements[el_id]
+                x = el["center_screen_x"]
+                y = el["center_screen_y"]
+
+            duration = args.get("duration_ms", 100)
+            if act == "move":
+                res = self.core.call("mouse_move", {"x": x, "y": y, "duration_ms": duration})
+            elif act in ("click", "double_click", "right_click", "middle_click"):
+                button = "right" if act == "right_click" else ("middle" if act == "middle_click" else "left")
+                clicks = 2 if act == "double_click" else 1
+                res = self.core.call(
+                    "mouse_click",
+                    {"x": x, "y": y, "button": button, "clicks": clicks, "duration_ms": duration},
+                )
+            elif act == "drag":
+                res = self.core.call(
+                    "mouse_drag",
+                    {
+                        "start_x": x,
+                        "start_y": y,
+                        "end_x": args["end_x"],
+                        "end_y": args["end_y"],
+                        "duration_ms": duration,
+                    },
+                )
+            elif act == "scroll":
+                res = self.core.call(
+                    "mouse_scroll",
+                    {"delta": args.get("scroll_delta", -3), "x": x, "y": y},
+                )
+            else:
+                raise ValueError(f"Unsupported mouse action: {act}")
+            return [{"type": "text", "text": json.dumps(res, ensure_ascii=False)}]
+
+        if name == "keyboard_action":
+            results = []
+            if args.get("text"):
+                results.append(
+                    self.core.call(
+                        "keyboard_type",
+                        {"text": args["text"], "press_enter": args.get("press_enter", False)},
+                    )
+                )
+            if args.get("hotkey"):
+                results.append(self.core.call("keyboard_hotkey", {"keys": args["hotkey"]}))
+            return [{"type": "text", "text": json.dumps(results, ensure_ascii=False)}]
+
+        if name in ("silent_click", "silent_type", "silent_automate_element", "manage_window"):
+            res = self.core.call(name, args)
+            return [{"type": "text", "text": json.dumps(res, ensure_ascii=False, indent=2)}]
+
+        raise ValueError(f"Unknown tool: {name}")
+
+    def run_stdio_loop(self) -> None:
+        """Runs standard MCP JSON-RPC 2.0 loop over stdin/stdout."""
+        for raw_line in sys.stdin:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            req_id = msg.get("id")
+            method = msg.get("method", "")
+            params = msg.get("params") or {}
+
+            # Notifications (no id) do not expect a response
+            if req_id is None:
+                continue
+
+            try:
+                if method == "initialize":
+                    result = {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {"tools": {"listChanged": False}},
+                        "serverInfo": {"name": "antigravity-bridge", "version": "0.1.0"},
+                    }
+                elif method == "tools/list":
+                    result = {"tools": self.get_mcp_tools_schema()}
+                elif method == "tools/call":
+                    tool_name = params.get("name", "")
+                    tool_args = params.get("arguments") or {}
+                    content = self.execute_tool(tool_name, tool_args)
+                    result = {"content": content, "isError": False}
+                elif method == "ping":
+                    result = {}
+                else:
+                    raise ValueError(f"Unsupported MCP method: {method}")
+
+                resp = {"jsonrpc": "2.0", "id": req_id, "result": result}
+            except Exception as exc:
+                resp = {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {
+                        "content": [{"type": "text", "text": f"Error: {exc}"}],
+                        "isError": True,
+                    },
+                }
+
+            sys.stdout.write(json.dumps(resp, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
+
+
+def main() -> None:
+    server = AntigravityBridgeServer()
+    try:
+        server.run_stdio_loop()
+    finally:
+        server.core.shutdown()
+
+
+if __name__ == "__main__":
+    main()

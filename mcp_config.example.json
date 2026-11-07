@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "antigravity-bridge": {
+      "command": "python",
+      "args": [
+        "-m",
+        "antigravity_mcp.server"
+      ],
+      "env": {
+        "PYTHONPATH": "C:/Users/fara/Desktop/Antigravity/src"
+      }
+    }
+  }
+}

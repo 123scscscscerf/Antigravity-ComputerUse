@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>AntigravityBridge.Core</AssemblyName>
+    <RootNamespace>AntigravityBridge.Core</RootNamespace>
+    <Version>0.1.0</Version>
+    <Description>Native Windows Core Engine (Vision, HID Input, Silent-Mode UIA/Win32) for Google Antigravity Bridge</Description>
+  </PropertyGroup>
+
+</Project>
