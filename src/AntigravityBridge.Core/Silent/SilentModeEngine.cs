@@ -15,6 +15,7 @@ public sealed class SilentModeEngine
 {
     public List<WindowInfo> ListWindows(bool visibleOnly = true, string? filter = null)
     {
+        Win32.EnsureDefaultDesktop();
         var results = new List<WindowInfo>();
         IntPtr fg = Win32.GetForegroundWindow();
 
@@ -88,6 +89,7 @@ public sealed class SilentModeEngine
 
     public object ManageWindow(long hwndValue, string action, int? x = null, int? y = null, int? width = null, int? height = null)
     {
+        Win32.EnsureDefaultDesktop();
         IntPtr hwnd = new(hwndValue);
         if (!Win32.IsWindow(hwnd))
             throw new ArgumentException($"Window 0x{hwndValue:X} does not exist.");
@@ -141,6 +143,7 @@ public sealed class SilentModeEngine
     /// </summary>
     public object SilentClick(long hwndValue, int relX, int relY, string button = "left", bool doubleClick = false)
     {
+        Win32.EnsureDefaultDesktop();
         IntPtr rootHwnd = new(hwndValue);
         if (!Win32.IsWindow(rootHwnd))
             throw new ArgumentException($"Invalid HWND: 0x{hwndValue:X}");
@@ -189,12 +192,16 @@ public sealed class SilentModeEngine
 
     /// <summary>
     /// Sends text or keystrokes to a background window via WM_CHAR / WM_KEYDOWN without changing window focus.
+    /// Automatically resolves child Edit / RichEdit controls when given a top-level window handle.
     /// </summary>
     public object SilentType(long hwndValue, string? text = null, string? key = null, bool pressEnter = false)
     {
-        IntPtr hwnd = new(hwndValue);
-        if (!Win32.IsWindow(hwnd))
+        Win32.EnsureDefaultDesktop();
+        IntPtr rootHwnd = new(hwndValue);
+        if (!Win32.IsWindow(rootHwnd))
             throw new ArgumentException($"Invalid HWND: 0x{hwndValue:X}");
+
+        IntPtr targetHwnd = ResolveTextInputChild(rootHwnd);
 
         if (!string.IsNullOrEmpty(text))
         {
@@ -203,10 +210,10 @@ public sealed class SilentModeEngine
                 if (c == '\r') continue;
                 if (c == '\n')
                 {
-                    PostKey(hwnd, 0x0D);
+                    PostKey(targetHwnd, 0x0D);
                     continue;
                 }
-                Win32.PostMessage(hwnd, Win32.WM_CHAR, (IntPtr)c, IntPtr.Zero);
+                Win32.PostMessage(targetHwnd, Win32.WM_CHAR, (IntPtr)c, IntPtr.Zero);
                 Thread.Sleep(5);
             }
         }
@@ -214,18 +221,19 @@ public sealed class SilentModeEngine
         if (!string.IsNullOrWhiteSpace(key))
         {
             ushort vk = GlobalInputEngine.ResolveVirtualKey(key);
-            PostKey(hwnd, vk);
+            PostKey(targetHwnd, vk);
         }
 
         if (pressEnter)
         {
-            PostKey(hwnd, 0x0D);
+            PostKey(targetHwnd, 0x0D);
         }
 
         return new
         {
             action = "silent_type",
-            hwnd = $"0x{hwndValue:X}",
+            root_hwnd = $"0x{hwndValue:X}",
+            target_hwnd = $"0x{targetHwnd.ToInt64():X}",
             text_length = text?.Length ?? 0,
             key,
             press_enter = pressEnter
@@ -238,6 +246,7 @@ public sealed class SilentModeEngine
     /// </summary>
     public List<UiElementInfo> InspectWindowUi(long hwndValue, int maxElements = 80)
     {
+        Win32.EnsureDefaultDesktop();
         IntPtr hwnd = new(hwndValue);
         if (!Win32.IsWindow(hwnd))
             throw new ArgumentException($"Invalid HWND: 0x{hwndValue:X}");
@@ -338,6 +347,7 @@ public sealed class SilentModeEngine
         string action = "invoke",
         string? value = null)
     {
+        Win32.EnsureDefaultDesktop();
         IntPtr hwnd = new(hwndValue);
         if (!Win32.IsWindow(hwnd))
             throw new ArgumentException($"Invalid HWND: 0x{hwndValue:X}");
@@ -437,6 +447,36 @@ public sealed class SilentModeEngine
         Win32.PostMessage(hwnd, Win32.WM_KEYDOWN, (IntPtr)vk, IntPtr.Zero);
         Thread.Sleep(15);
         Win32.PostMessage(hwnd, Win32.WM_KEYUP, (IntPtr)vk, IntPtr.Zero);
+    }
+
+    private static IntPtr ResolveTextInputChild(IntPtr rootHwnd)
+    {
+        IntPtr bestChild = IntPtr.Zero;
+        Win32.EnumChildWindows(rootHwnd, (childHwnd, _) =>
+        {
+            if (!Win32.IsWindowVisible(childHwnd))
+                return true;
+
+            var sbClass = new StringBuilder(128);
+            Win32.GetClassName(childHwnd, sbClass, sbClass.Capacity);
+            string cls = sbClass.ToString();
+
+            if (cls.Contains("Edit", StringComparison.OrdinalIgnoreCase) ||
+                cls.Contains("RichEdit", StringComparison.OrdinalIgnoreCase) ||
+                cls.Contains("Scintilla", StringComparison.OrdinalIgnoreCase) ||
+                cls.Contains("TextBox", StringComparison.OrdinalIgnoreCase))
+            {
+                bestChild = childHwnd;
+                return false; // Found primary text control
+            }
+
+            if (bestChild == IntPtr.Zero)
+                bestChild = childHwnd;
+
+            return true;
+        }, IntPtr.Zero);
+
+        return bestChild != IntPtr.Zero ? bestChild : rootHwnd;
     }
 
     private static IntPtr FindDeepestChildAtScreenPoint(IntPtr rootHwnd, int screenX, int screenY, out int localX, out int localY)

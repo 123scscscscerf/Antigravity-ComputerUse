@@ -1,3 +1,4 @@
+using System.Windows.Forms;
 using AntigravityBridge.Core.Native;
 
 namespace AntigravityBridge.Core.Input;
@@ -12,6 +13,7 @@ public sealed class GlobalInputEngine
 
     private void EnsureFailSafe()
     {
+        Win32.EnsureDefaultDesktop();
         if (!FailSafeEnabled) return;
         if (Win32.GetCursorPos(out var pt) && pt.X <= 2 && pt.Y <= 2)
         {
@@ -20,13 +22,36 @@ public sealed class GlobalInputEngine
         }
     }
 
+    private static void SendRawMouseMove(int x, int y)
+    {
+        int screenW = Math.Max(1, Screen.PrimaryScreen?.Bounds.Width ?? 1920);
+        int screenH = Math.Max(1, Screen.PrimaryScreen?.Bounds.Height ?? 1080);
+        int normX = (int)Math.Round((double)x * 65535 / (screenW - 1));
+        int normY = (int)Math.Round((double)y * 65535 / (screenH - 1));
+        var input = new Win32.INPUT
+        {
+            type = Win32.INPUT_MOUSE,
+            U = new Win32.InputUnion
+            {
+                mi = new Win32.MOUSEINPUT
+                {
+                    dx = normX,
+                    dy = normY,
+                    dwFlags = Win32.MOUSEEVENTF_MOVE | Win32.MOUSEEVENTF_ABSOLUTE
+                }
+            }
+        };
+        Win32.SendInput(1, [input], Win32.INPUT.Size);
+        Win32.SetCursorPos(x, y);
+    }
+
     public object MoveMouse(int x, int y, int durationMs = 0)
     {
         EnsureFailSafe();
 
         if (durationMs <= 0)
         {
-            Win32.SetCursorPos(x, y);
+            SendRawMouseMove(x, y);
         }
         else
         {
@@ -42,7 +67,7 @@ public sealed class GlobalInputEngine
                 double ease = t * t * (3.0 - 2.0 * t);
                 int curX = (int)Math.Round(start.X + (x - start.X) * ease);
                 int curY = (int)Math.Round(start.Y + (y - start.Y) * ease);
-                Win32.SetCursorPos(curX, curY);
+                SendRawMouseMove(curX, curY);
                 Thread.Sleep(sleepStep);
             }
         }
@@ -216,12 +241,23 @@ public sealed class GlobalInputEngine
 
     private static void SendMouseFlags(uint flags)
     {
+        Win32.GetCursorPos(out var pt);
+        int screenW = Math.Max(1, Screen.PrimaryScreen?.Bounds.Width ?? 1920);
+        int screenH = Math.Max(1, Screen.PrimaryScreen?.Bounds.Height ?? 1080);
+        int normX = (int)Math.Round((double)pt.X * 65535 / (screenW - 1));
+        int normY = (int)Math.Round((double)pt.Y * 65535 / (screenH - 1));
+
         var input = new Win32.INPUT
         {
             type = Win32.INPUT_MOUSE,
             U = new Win32.InputUnion
             {
-                mi = new Win32.MOUSEINPUT { dwFlags = flags }
+                mi = new Win32.MOUSEINPUT
+                {
+                    dx = normX,
+                    dy = normY,
+                    dwFlags = flags | Win32.MOUSEEVENTF_ABSOLUTE | Win32.MOUSEEVENTF_MOVE
+                }
             }
         };
         Win32.SendInput(1, [input], Win32.INPUT.Size);

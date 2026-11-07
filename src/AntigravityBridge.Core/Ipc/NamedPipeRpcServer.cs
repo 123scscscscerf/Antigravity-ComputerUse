@@ -5,6 +5,7 @@ using System.Text.Json;
 using AntigravityBridge.Core.Capture;
 using AntigravityBridge.Core.Input;
 using AntigravityBridge.Core.Models;
+using AntigravityBridge.Core.Native;
 using AntigravityBridge.Core.Silent;
 
 namespace AntigravityBridge.Core.Ipc;
@@ -85,6 +86,7 @@ public sealed class NamedPipeRpcServer
 
     public string ProcessRawJsonRequest(string jsonLine)
     {
+        Win32.EnsureDefaultDesktop();
         string reqId = "unknown";
         try
         {

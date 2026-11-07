@@ -16,6 +16,7 @@ public sealed class ScreenCaptureEngine
 {
     public List<MonitorInfo> GetMonitors()
     {
+        Win32.EnsureDefaultDesktop();
         var screens = Screen.AllScreens;
         var list = new List<MonitorInfo>(screens.Length);
         for (int i = 0; i < screens.Length; i++)
@@ -37,6 +38,7 @@ public sealed class ScreenCaptureEngine
 
     public CaptureResult CaptureScreen(int monitorIndex = 0, int? regionX = null, int? regionY = null, int? regionW = null, int? regionH = null)
     {
+        Win32.EnsureDefaultDesktop();
         var screens = Screen.AllScreens;
         if (screens.Length == 0)
             throw new InvalidOperationException("No displays detected.");
@@ -143,6 +145,7 @@ public sealed class ScreenCaptureEngine
     /// </summary>
     public CaptureResult CaptureWindowSilent(long hwndValue, bool clientOnly = false)
     {
+        Win32.EnsureDefaultDesktop();
         IntPtr hwnd = new(hwndValue);
         if (!Win32.IsWindow(hwnd))
             throw new ArgumentException($"Invalid window handle: 0x{hwndValue:X}");

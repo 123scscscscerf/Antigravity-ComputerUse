@@ -16,6 +16,42 @@ public static class Win32
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetProcessDpiAwarenessContext(IntPtr dpiContext);
 
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern IntPtr OpenDesktop(string lpszDesktop, uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetThreadDesktop(IntPtr hDesktop);
+
+    private static IntPtr s_defaultDesktop;
+
+    /// <summary>
+    /// Attaches the calling thread to the interactive user desktop ("default" on WinSta0),
+    /// bypassing isolated sandbox desktops (e.g., exebox-*) so GDI, EnumWindows, and SendInput target the real screen.
+    /// </summary>
+    public static void EnsureDefaultDesktop()
+    {
+        try
+        {
+            if (s_defaultDesktop == IntPtr.Zero)
+            {
+                IntPtr hDesktop = OpenDesktop("default", 0, false, 0x10000000 /* GENERIC_ALL */);
+                if (hDesktop == IntPtr.Zero)
+                {
+                    hDesktop = OpenDesktop("default", 0, false, 0x01FF);
+                }
+                s_defaultDesktop = hDesktop;
+            }
+
+            if (s_defaultDesktop != IntPtr.Zero)
+            {
+                SetThreadDesktop(s_defaultDesktop);
+            }
+        }
+        catch
+        {
+        }
+    }
+
     // --- Window Enumeration & Info ---
     [DllImport("user32.dll")]
     public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
