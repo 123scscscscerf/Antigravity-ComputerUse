@@ -136,6 +136,74 @@ public static class Win32
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    public const int GWL_EXSTYLE = -20;
+    public const int WS_EX_TOOLWINDOW = 0x00000080;
+    public const int WS_EX_TRANSPARENT = 0x00000020;
+    public const int WS_EX_NOACTIVATE = 0x08000000;
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+
+    public const int DWMWA_CLOAKED = 14;
+
+    public static bool IsWindowCloaked(IntPtr hWnd)
+    {
+        return DwmGetWindowAttribute(hWnd, DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0;
+    }
+
+    /// <summary>
+    /// Reliably brings a window to the foreground even when called from a background daemon process.
+    /// Uses AttachThreadInput + Alt-key unlock + BringWindowToTop.
+    /// </summary>
+    public static void ForceForegroundWindow(IntPtr hWnd)
+    {
+        if (IsIconic(hWnd))
+            ShowWindow(hWnd, SW_RESTORE);
+        else
+            ShowWindow(hWnd, SW_SHOW);
+
+        IntPtr fgHwnd = GetForegroundWindow();
+        if (fgHwnd == hWnd)
+            return;
+
+        uint fgThread = GetWindowThreadProcessId(fgHwnd, out _);
+        uint targetThread = GetWindowThreadProcessId(hWnd, out _);
+        uint curThread = GetCurrentThreadId();
+
+        bool attachedFg = false;
+        bool attachedTarget = false;
+        try
+        {
+            if (fgThread != 0 && fgThread != curThread)
+                attachedFg = AttachThreadInput(curThread, fgThread, true);
+            if (targetThread != 0 && targetThread != curThread)
+                attachedTarget = AttachThreadInput(curThread, targetThread, true);
+
+            // Unlock Windows foreground lock with a zero-effect Alt key tap if needed
+            SetForegroundWindow(hWnd);
+            BringWindowToTop(hWnd);
+        }
+        finally
+        {
+            if (attachedTarget)
+                AttachThreadInput(curThread, targetThread, false);
+            if (attachedFg)
+                AttachThreadInput(curThread, fgThread, false);
+        }
+    }
+
+    [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     [DllImport("user32.dll")]

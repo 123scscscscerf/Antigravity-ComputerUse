@@ -454,10 +454,21 @@ public sealed class ScreenCaptureEngine
     private static void CompositeDesktopWindows(Bitmap canvas, int viewX, int viewY, int viewW, int viewH)
     {
         var windowsTopToBottom = new List<(IntPtr Hwnd, Win32.RECT Rect)>();
+        var sbClass = new System.Text.StringBuilder(128);
 
         Win32.EnumWindows((hWnd, _) =>
         {
-            if (!Win32.IsWindowVisible(hWnd) || Win32.IsIconic(hWnd))
+            if (!Win32.IsWindowVisible(hWnd) || Win32.IsIconic(hWnd) || Win32.IsWindowCloaked(hWnd))
+                return true;
+
+            int exStyle = Win32.GetWindowLong(hWnd, Win32.GWL_EXSTYLE);
+            if ((exStyle & Win32.WS_EX_TRANSPARENT) != 0)
+                return true;
+
+            sbClass.Clear();
+            Win32.GetClassName(hWnd, sbClass, sbClass.Capacity);
+            string cls = sbClass.ToString();
+            if (cls is "Windows.UI.Core.CoreWindow" or "ApplicationFrameWindow" or "CEF-OSC-WIDGET")
                 return true;
 
             if (Win32.GetWindowRect(hWnd, out var r) && r.Width > 0 && r.Height > 0)
@@ -466,9 +477,10 @@ public sealed class ScreenCaptureEngine
                 {
                     windowsTopToBottom.Add((hWnd, r));
 
-                    // Z-Order Occlusion Culling: if a top-level window covers the entire capture region,
-                    // all windows underneath it are occluded and do not need PrintWindow rendering.
-                    if (r.Left <= viewX && r.Top <= viewY && r.Right >= viewX + viewW && r.Bottom >= viewY + viewH)
+                    // Z-Order Occlusion Culling: if a real opaque window covers the entire capture region
+                    // (excluding the desktop wallpaper container Progman/WorkerW), stop enumerating behind it.
+                    if (cls is not ("Progman" or "WorkerW") &&
+                        r.Left <= viewX && r.Top <= viewY && r.Right >= viewX + viewW && r.Bottom >= viewY + viewH)
                     {
                         return false;
                     }

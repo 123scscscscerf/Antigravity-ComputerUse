@@ -24,7 +24,7 @@ public sealed class SilentModeEngine
 
         Win32.EnumWindows((hWnd, _) =>
         {
-            bool visible = Win32.IsWindowVisible(hWnd);
+            bool visible = Win32.IsWindowVisible(hWnd) && !Win32.IsWindowCloaked(hWnd);
             if (visibleOnly && !visible)
                 return true;
 
@@ -151,9 +151,7 @@ public sealed class SilentModeEngine
         switch (act)
         {
             case "focus" or "activate":
-                if (Win32.IsIconic(hwnd))
-                    Win32.ShowWindow(hwnd, Win32.SW_RESTORE);
-                Win32.SetForegroundWindow(hwnd);
+                Win32.ForceForegroundWindow(hwnd);
                 break;
             case "minimize":
                 Win32.ShowWindow(hwnd, Win32.SW_MINIMIZE);
