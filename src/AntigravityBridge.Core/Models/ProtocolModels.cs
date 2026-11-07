@@ -67,6 +67,9 @@ public sealed class CaptureResult
     [JsonPropertyName("image_base64")]
     public string ImageBase64 { get; set; } = string.Empty;
 
+    [JsonPropertyName("mime_type")]
+    public string MimeType { get; set; } = "image/jpeg";
+
     [JsonPropertyName("width")]
     public int Width { get; set; }
 
@@ -87,6 +90,19 @@ public sealed class CaptureResult
 
     [JsonPropertyName("cursor_y")]
     public int CursorY { get; set; }
+
+    [JsonPropertyName("frame_hash")]
+    public string FrameHash { get; set; } = string.Empty;
+
+    [JsonPropertyName("diff_percent")]
+    public double DiffPercent { get; set; }
+
+    [JsonPropertyName("screen_changed")]
+    public bool ScreenChanged { get; set; }
+
+    [JsonPropertyName("saved_path")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SavedPath { get; set; }
 }
 
 public sealed class WindowInfo

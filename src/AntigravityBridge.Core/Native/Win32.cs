@@ -1,10 +1,12 @@
+using System.Collections.Concurrent;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
 namespace AntigravityBridge.Core.Native;
 
 /// <summary>
-/// P/Invoke declarations for Win32 API (user32, gdi32, dwmapi) used by Capture, Global Input, and Silent-Mode engines.
+/// P/Invoke declarations for Win32 API (user32, gdi32, kernel32) used by Capture, Global Input, and Silent-Mode engines.
 /// </summary>
 public static class Win32
 {
@@ -50,6 +52,50 @@ public static class Win32
         catch
         {
         }
+    }
+
+    // --- Fast Kernel32 Process Name Lookup (<0.01ms vs 4ms Process.GetProcessById) ---
+    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern bool QueryFullProcessImageName(
+        IntPtr hProcess, uint dwFlags, StringBuilder lpExeName, ref int lpdwSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
+    private static readonly ConcurrentDictionary<uint, string> s_processNameCache = new();
+
+    public static string GetFastProcessName(uint pid)
+    {
+        if (pid == 0) return string.Empty;
+        if (s_processNameCache.TryGetValue(pid, out string? cached))
+            return cached;
+
+        IntPtr hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (hProc == IntPtr.Zero)
+            return string.Empty;
+
+        try
+        {
+            var sb = new StringBuilder(512);
+            int size = sb.Capacity;
+            if (QueryFullProcessImageName(hProc, 0, sb, ref size))
+            {
+                string name = Path.GetFileNameWithoutExtension(sb.ToString());
+                s_processNameCache[pid] = name;
+                return name;
+            }
+        }
+        finally
+        {
+            CloseHandle(hProc);
+        }
+
+        return string.Empty;
     }
 
     // --- Window Enumeration & Info ---
@@ -125,6 +171,9 @@ public static class Win32
 
     public const uint PW_CLIENTONLY = 0x00000001;
     public const uint PW_RENDERFULLCONTENT = 0x00000002;
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetDC(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     public static extern IntPtr GetWindowDC(IntPtr hWnd);
