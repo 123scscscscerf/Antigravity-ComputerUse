@@ -155,7 +155,7 @@ python tests/benchmark_speed.py
       "command": "python",
       "args": ["-m", "antigravity_mcp.server"],
       "env": {
-        "PYTHONPATH": "C:/Users/fara/Desktop/Antigravity/src"
+        "PYTHONPATH": "C:/path/to/Antigravity-ComputerUse/src"
       }
     }
   }
