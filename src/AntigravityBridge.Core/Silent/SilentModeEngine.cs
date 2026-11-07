@@ -216,6 +216,15 @@ public sealed class SilentModeEngine
         Thread.Sleep(5);
         Win32.PostMessage(targetHwnd, upMsg, IntPtr.Zero, lParam);
 
+        // If target child control is a Win32 Button, also post BM_CLICK so NSIS/Win32 dialogs trigger BN_CLICKED even in background
+        var sbCls = new StringBuilder(64);
+        Win32.GetClassName(targetHwnd, sbCls, sbCls.Capacity);
+        if (button.Equals("left", StringComparison.OrdinalIgnoreCase) &&
+            sbCls.ToString().Contains("Button", StringComparison.OrdinalIgnoreCase))
+        {
+            Win32.PostMessage(targetHwnd, Win32.BM_CLICK, IntPtr.Zero, IntPtr.Zero);
+        }
+
         if (doubleClick)
         {
             Thread.Sleep(10);
@@ -457,18 +466,39 @@ public sealed class SilentModeEngine
             case "invoke" or "click":
                 if (target.TryGetCurrentPattern(InvokePattern.Pattern, out object? invObj) && invObj is InvokePattern inv)
                 {
-                    inv.Invoke();
-                    return new { ok = true, pattern = "InvokePattern", name = target.Current.Name };
+                    try
+                    {
+                        inv.Invoke();
+                        return new { ok = true, pattern = "InvokePattern", name = target.Current.Name };
+                    }
+                    catch
+                    {
+                        // Fallback to BM_CLICK / SilentClick when Win32 dialog button rejects UIA Invoke in background
+                    }
                 }
                 if (target.TryGetCurrentPattern(TogglePattern.Pattern, out object? togObj) && togObj is TogglePattern tog)
                 {
-                    tog.Toggle();
-                    return new { ok = true, pattern = "TogglePattern", name = target.Current.Name };
+                    try
+                    {
+                        tog.Toggle();
+                        return new { ok = true, pattern = "TogglePattern", name = target.Current.Name };
+                    }
+                    catch { }
                 }
                 if (target.TryGetCurrentPattern(SelectionItemPattern.Pattern, out object? selObj) && selObj is SelectionItemPattern sel)
                 {
-                    sel.Select();
-                    return new { ok = true, pattern = "SelectionItemPattern", name = target.Current.Name };
+                    try
+                    {
+                        sel.Select();
+                        return new { ok = true, pattern = "SelectionItemPattern", name = target.Current.Name };
+                    }
+                    catch { }
+                }
+                if (target.Current.NativeWindowHandle != 0)
+                {
+                    IntPtr childHwnd = new(target.Current.NativeWindowHandle);
+                    Win32.PostMessage(childHwnd, Win32.BM_CLICK, IntPtr.Zero, IntPtr.Zero);
+                    return new { ok = true, pattern = "BM_CLICK", name = target.Current.Name, hwnd = $"0x{childHwnd.ToInt64():X}" };
                 }
                 var rect = target.Current.BoundingRectangle;
                 Win32.GetWindowRect(hwnd, out var winRect);
